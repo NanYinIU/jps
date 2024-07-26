@@ -1,6 +1,13 @@
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::{fmt::format, fs, path::PathBuf};
+use std::{
+    fmt::format,
+    fs::{self, File},
+    io,
+    path::PathBuf,
+};
+
+use crate::test::db_serialize;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DataBase {
@@ -32,13 +39,32 @@ impl DataBase {
         Ok(())
     }
 
-    pub fn create_db(host: String, tables: Vec<Table>) -> Result<DataBase> {
-        let db: DataBase = DataBase { host, tables };
-        Ok(db)
+    pub fn create_db(&mut self, host: String, tables: Vec<Table>) -> Result<()> {
+        let db: DataBase = DataBase {
+            host: host.clone(),
+            tables,
+        };
+        let content = Self::serialize(&vec![db]).unwrap();
+        let path = PathBuf::from("dir").join(host).with_extension("txt");
+        // 需要确保这个文件不存在
+        let after_create = match fs::read(&path) {
+            Ok(_) => todo!("do add table content"),
+            Err(e) => {
+                if e.kind() == io::ErrorKind::NotFound {
+                    fs::write(&path, content).with_context(|| format!("error!!"))?
+                }
+            }
+        };
+        // fs::write(
+        //     PathBuf::from("dir").join(host).with_extension("txt"),
+        //     &content,
+        // )?;
+        Ok(())
     }
 
-    pub fn update_db() -> Result<()> {
-        todo!()
+    pub fn update_db(&mut self, host: String) -> Result<()> {
+        self.host = host;
+        Ok(())
     }
 
     pub fn serialize(dbs: &Vec<DataBase>) -> Result<Vec<u8>> {
