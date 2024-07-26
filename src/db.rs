@@ -7,8 +7,6 @@ use std::{
     path::PathBuf,
 };
 
-use crate::test::db_serialize;
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DataBase {
     pub host: String,
@@ -39,27 +37,29 @@ impl DataBase {
         Ok(())
     }
 
-    pub fn create_db(&mut self, host: String, tables: Vec<Table>) -> Result<()> {
-        let db: DataBase = DataBase {
-            host: host.clone(),
-            tables,
-        };
-        let content = Self::serialize(&vec![db]).unwrap();
-        let path = PathBuf::from("dir").join(host).with_extension("txt");
+    pub fn create_db(&mut self, host: String, tables: Vec<Table>) -> Result<DataBase> {
+        let path = PathBuf::from("dir")
+            .join(host.clone())
+            .with_extension("txt");
         // 需要确保这个文件不存在
-        let after_create = match fs::read(&path) {
-            Ok(_) => todo!("do add table content"),
+        return match fs::read(&path) {
+            Ok(buffer) => {
+                let mut this_db = Self::deserialize(&buffer)?;
+                for i in tables {
+                    this_db.tables.push(i)
+                }
+                return Ok(this_db);
+            }
             Err(e) => {
                 if e.kind() == io::ErrorKind::NotFound {
-                    fs::write(&path, content).with_context(|| format!("error!!"))?
+                    let db: DataBase = DataBase { host, tables };
+                    let content = Self::serialize(&db).unwrap();
+                    fs::write(&path, content).with_context(|| format!("error!!"))?;
+                    return Ok(db);
                 }
+                Err(anyhow!("unexpect error !"))
             }
         };
-        // fs::write(
-        //     PathBuf::from("dir").join(host).with_extension("txt"),
-        //     &content,
-        // )?;
-        Ok(())
     }
 
     pub fn update_db(&mut self, host: String) -> Result<()> {
@@ -67,22 +67,22 @@ impl DataBase {
         Ok(())
     }
 
-    pub fn serialize(dbs: &Vec<DataBase>) -> Result<Vec<u8>> {
+    pub fn serialize(db: &DataBase) -> Result<Vec<u8>> {
         (|| -> bincode::Result<_> {
             let magic_number = "JPS";
             let magic_number_size = bincode::serialized_size(magic_number)?;
-            let content_size = bincode::serialized_size(&dbs)?;
+            let content_size = bincode::serialized_size(&db)?;
             let buffer_size = magic_number_size + content_size;
             let mut buffer = Vec::with_capacity(buffer_size as usize);
             // 这里的version
             bincode::serialize_into(&mut buffer, magic_number)?;
-            bincode::serialize_into(&mut buffer, dbs)?;
+            bincode::serialize_into(&mut buffer, db)?;
             Ok(buffer)
         })()
         .context("error")
     }
 
-    pub fn deserialize(buffer: &Vec<u8>) -> Result<Vec<DataBase>> {
+    pub fn deserialize(buffer: &Vec<u8>) -> Result<DataBase> {
         let magic_number = "JPS";
         let magic_number_size = bincode::serialized_size(magic_number)?;
         if buffer.len() < magic_number_size as usize {
@@ -90,7 +90,7 @@ impl DataBase {
         }
         let (magic_number, content) = buffer.split_at(magic_number_size as usize);
         // 分别反序列化
-        let db: Vec<DataBase> = match bincode::deserialize(&magic_number).unwrap() {
+        let db: DataBase = match bincode::deserialize(&magic_number).unwrap() {
             "JPS" => bincode::deserialize(&content)?,
             _ => return Err(anyhow!("error version code")),
         };
