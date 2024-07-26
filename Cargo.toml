@@ -8,7 +8,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
+bincode = "1.3.3"
 clap = { version = "4.5.10", features = ["derive"] }
 color-print = "0.3.6"
 expectrl = "0.7.1"
-nix = { version ="0.29.0",features = ["term","process","fs"]}
+serde = { version = "1.0.116", features = ["derive"] }
