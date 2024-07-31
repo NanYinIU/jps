@@ -1,18 +1,15 @@
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::format,
-    fs::{self, File},
-    io,
-    path::PathBuf,
-};
+use std::{fs, io, path::PathBuf, sync::Arc};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DataBase {
     pub host: String,
-    pub tables: Vec<Table>,
+    #[serde(with = "arc_vec")]
+    pub tables: Vec<Arc<Table>>,
+    pub path: PathBuf,
 }
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Table {
     pub name: String,
     pub path: String,
@@ -21,53 +18,55 @@ pub struct Table {
 }
 
 impl DataBase {
-    pub fn get_connect(self) -> Result<()> {
-        // 打开文件目录
-        let connect_dir = "../";
-        let pb = PathBuf::from(connect_dir);
-        pb.join(self.host).with_extension("txt");
-        // 根据Host创建的文件内容
-        match std::fs::read(pb) {
-            Ok(bytes) => {
-                todo!()
-            }
-            Err(e) => return Err(anyhow!("dbError:{}", e)),
-        }
-        // read 出来
-        Ok(())
-    }
-
-    pub fn create_db(&mut self, host: String, tables: Vec<Table>) -> Result<DataBase> {
-        let path = PathBuf::from("dir")
-            .join(host.clone())
-            .with_extension("txt");
+    fn connect(db: &DataBase) -> Result<DataBase> {
+        let path = &db.path;
         // 需要确保这个文件不存在
         return match fs::read(&path) {
             Ok(buffer) => {
                 let mut this_db = Self::deserialize(&buffer)?;
-                for i in tables {
-                    this_db.tables.push(i)
+                let tables = &db.tables;
+                if !(tables.is_empty()) {
+                    this_db.tables.extend(db.tables.iter().cloned())
                 }
                 return Ok(this_db);
             }
             Err(e) => {
                 if e.kind() == io::ErrorKind::NotFound {
-                    let db: DataBase = DataBase { host, tables };
                     let content = Self::serialize(&db).unwrap();
-                    fs::write(&path, content).with_context(|| format!("error!!"))?;
-                    return Ok(db);
+                    fs::write(&path, content)
+                        .with_context(|| format!("create host file error!!"))?;
+                    return Ok(db.to_owned());
                 }
-                Err(anyhow!("unexpect error !"))
+                Err(anyhow!("create db unexpect error !"))
             }
         };
     }
 
-    pub fn update_db(&mut self, host: String) -> Result<()> {
-        self.host = host;
-        Ok(())
+    fn build_path_buf(host: &str) -> PathBuf {
+        PathBuf::from("dir").join(host).with_extension("txt")
     }
 
-    pub fn serialize(db: &DataBase) -> Result<Vec<u8>> {
+    pub fn create_or_update(&mut self, host: String, tables: Vec<Table>) -> Result<DataBase> {
+        let path = Self::build_path_buf(&host);
+        let db = DataBase {
+            host,
+            tables: tables.into_iter().map(|x| Arc::new(x)).collect(),
+            path,
+        };
+        Self::connect(&db)
+    }
+
+    pub fn read(&mut self, host: String) -> Result<DataBase> {
+        let path = Self::build_path_buf(&host);
+        let db = DataBase {
+            host,
+            tables: vec![],
+            path,
+        };
+        Self::connect(&db)
+    }
+
+    fn serialize(db: &DataBase) -> Result<Vec<u8>> {
         (|| -> bincode::Result<_> {
             let magic_number = "JPS";
             let magic_number_size = bincode::serialized_size(magic_number)?;
@@ -82,7 +81,7 @@ impl DataBase {
         .context("error")
     }
 
-    pub fn deserialize(buffer: &Vec<u8>) -> Result<DataBase> {
+    fn deserialize(buffer: &Vec<u8>) -> Result<DataBase> {
         let magic_number = "JPS";
         let magic_number_size = bincode::serialized_size(magic_number)?;
         if buffer.len() < magic_number_size as usize {
@@ -107,5 +106,26 @@ impl Table {
             last_accessed,
         };
         Ok(t)
+    }
+}
+
+mod arc_vec {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(data: &Vec<Arc<Table>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let vec: Vec<&Table> = data.iter().map(AsRef::as_ref).collect();
+        vec.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Arc<Table>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let vec: Vec<Table> = Vec::deserialize(deserializer)?;
+        Ok(vec.into_iter().map(Arc::new).collect())
     }
 }

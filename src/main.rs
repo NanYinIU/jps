@@ -13,9 +13,6 @@ pub fn main() -> ExitCode {
 }
 #[cfg(test)]
 pub mod test {
-    use serde::Serialize;
-
-    use crate::db::{DataBase, Table};
 
     #[test]
     pub fn test_bincode() {
